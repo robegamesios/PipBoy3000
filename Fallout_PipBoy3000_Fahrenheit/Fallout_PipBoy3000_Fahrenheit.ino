@@ -20,7 +20,7 @@
 //========================USEFUL VARIABLES=============================
 const char *ssid = "ASUS-RT-AX56U-2.4G";
 const char *password = "tocino25";
-int UTC = -8;                        //Set your time zone ex: france = UTC+2
+int UTC = -8;                       //Set your time zone ex: france = UTC+2
 uint16_t notification_volume = 25;  //0 to 30
 //=====================================================================
 
@@ -56,6 +56,18 @@ AnimatedGIF gif;
 #define IN_TIME 32
 #define IN_RADIO 33
 
+// PCM5102A DAC pins
+#define I2S_BCLK 12  // BCK pin
+#define I2S_LRC 13   // LRCK pin
+#define I2S_DOUT 14  // DIN pin
+
+// Rotary encoder pins
+#define ROTARY_L1 34
+#define ROTARY_L2 35
+#define ROTARY_L3 36
+#define ROTARY_R1 39
+#define ROTARY_R2 19
+
 #define REPEAT_CAL false
 #define Light_green 0x35C2
 #define Dark_green 0x0261
@@ -69,7 +81,16 @@ AnimatedGIF gif;
 #include "FS.h"
 #include <SPI.h>
 
+// internet radio
+#include <AudioFileSourceICYStream.h>
+#include <AudioFileSourceBuffer.h>
+#include <AudioGeneratorMP3.h>
+#include <AudioOutputI2S.h>
 
+void cleanupI2S();
+void MDCallback(void *cbData, const char *type, bool isUnicode, const char *string);
+bool setupAudio();
+bool startRadio();
 
 const byte RXD2 = 16;  // Connects to module's TX => 16
 const byte TXD2 = 17;  // Connects to module's RX => 17
@@ -105,6 +126,104 @@ byte omm = 99, oss = 99;
 byte xcolon = 0, xsecs = 0;
 unsigned int colour = 0;
 
+// internet radio
+// Audio objects
+AudioFileSourceICYStream *stream = nullptr;
+AudioFileSourceBuffer *buff = nullptr;
+AudioGeneratorMP3 *mp3 = nullptr;
+AudioOutputI2S *out = nullptr;
+uint8_t *preallocateBuffer = nullptr;
+const int preallocateBufferSize = 16 * 1024;  // Back to 16KB to reduce memory pressure
+
+// Radio stations - just testing with one for now
+const char *radioStations[] = {
+  "http://strm112.1.fm/60s_70s_mobile_mp3"  // Testing with just one station
+};
+
+void MDCallback(void *cbData, const char *type, bool isUnicode, const char *string) {
+  Serial.printf("Metadata: %s = %s\n", type, string);
+}
+
+void cleanupI2S() {
+  if (mp3) {
+    mp3->stop();
+    delete mp3;
+    mp3 = nullptr;
+  }
+
+  if (buff) {
+    delete buff;
+    buff = nullptr;
+  }
+
+  if (stream) {
+    delete stream;
+    stream = nullptr;
+  }
+}
+
+bool setupAudio() {
+  if (!preallocateBuffer) {
+    preallocateBuffer = (uint8_t *)malloc(preallocateBufferSize);
+    if (!preallocateBuffer) {
+      Serial.println("Failed to allocate buffer");
+      return false;
+    }
+  }
+
+  if (!out) {
+    out = new AudioOutputI2S();
+    out->SetPinout(I2S_BCLK, I2S_LRC, I2S_DOUT);
+    out->SetGain(0.5);
+    out->SetOutputModeMono(true);
+  }
+
+  return true;
+}
+
+bool startRadio() {
+  Serial.println("Starting radio...");
+
+  cleanupI2S();
+
+  if (!setupAudio()) return false;
+
+  stream = new AudioFileSourceICYStream(radioStations[0]);
+  if (!stream) {
+    Serial.println("Failed to create stream");
+    return false;
+  }
+  stream->RegisterMetadataCB(MDCallback, NULL);
+
+  buff = new AudioFileSourceBuffer(stream, preallocateBuffer, preallocateBufferSize);
+  if (!buff) {
+    Serial.println("Failed to create buffer");
+    cleanupI2S();
+    return false;
+  }
+
+  mp3 = new AudioGeneratorMP3();
+  if (!mp3) {
+    Serial.println("Failed to create MP3 decoder");
+    cleanupI2S();
+    return false;
+  }
+
+  if (!mp3->begin(buff, out)) {
+    Serial.println("Failed to start MP3 decoder");
+    cleanupI2S();
+    return false;
+  }
+
+  Serial.println("Radio started successfully");
+  return true;
+}
+
+void maintainBuffer() {
+  // The buffer is managed automatically by the AudioFileSourceBuffer class
+  // We just need to ensure mp3->loop() is called frequently
+}
+
 void setup() {
 
   pinMode(IN_RADIO, INPUT_PULLUP);
@@ -114,6 +233,7 @@ void setup() {
   pinMode(IN_TIME, INPUT_PULLUP);
 
   Serial.begin(115200);
+  delay(1000);
 
   tft.begin();
   tft.setRotation(1);
@@ -191,6 +311,12 @@ void setup() {
   delay(1000);
   myDFPlayer.playMp3Folder(1);  //Play the first mp3
 
+  // Initialize audio system
+  if (!setupAudio()) {
+    Serial.println("Failed to setup audio");
+    return;
+  }
+
   if (gif.open((uint8_t *)INIT, sizeof(INIT), GIFDraw)) {
     tft.startWrite();  // The TFT chip select is locked low
     while (gif.playFrame(true, NULL)) {
@@ -203,23 +329,34 @@ void setup() {
 }
 
 void loop() {
+  static unsigned long lastTimeUpdate = 0;
+  const unsigned long TIME_UPDATE_INTERVAL = 10000;
 
-  timeClient.update();
-  Serial.print("Time: ");
-  Serial.println(timeClient.getFormattedTime());
-  unsigned long epochTime = timeClient.getEpochTime();
-  struct tm *ptm = gmtime((time_t *)&epochTime);
-  int currentYear = ptm->tm_year + 1900;
-  Serial.print("Year: ");
-  Serial.println(currentYear);
+  static bool radioStarted = false;
+  static unsigned long lastCheck = 0;
 
-  int monthDay = ptm->tm_mday;
-  Serial.print("Month day: ");
-  Serial.println(monthDay);
+  // Update time only every second
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastTimeUpdate >= TIME_UPDATE_INTERVAL) {
+    lastTimeUpdate = currentMillis;
+    timeClient.update();
+    Serial.print("Time: ");
+    Serial.println(timeClient.getFormattedTime());
 
-  int currentMonth = ptm->tm_mon + 1;
-  Serial.print("Month: ");
-  Serial.println(currentMonth);
+    unsigned long epochTime = timeClient.getEpochTime();
+    struct tm *ptm = gmtime((time_t *)&epochTime);
+    int currentYear = ptm->tm_year + 1900;
+    Serial.print("Year: ");
+    Serial.println(currentYear);
+
+    int monthDay = ptm->tm_mday;
+    Serial.print("Month day: ");
+    Serial.println(monthDay);
+
+    int currentMonth = ptm->tm_mon + 1;
+    Serial.print("Month: ");
+    Serial.println(currentMonth);
+  }
 
   if (digitalRead(IN_STAT) == false) {
     flag = 1;
@@ -307,23 +444,74 @@ void loop() {
 
   if (digitalRead(IN_RADIO) == false) {
     flag = 1;
-    myDFPlayer.playMp3Folder(random(2, 5));
-    delay(500);
-    myDFPlayer.playMp3Folder(random(5, 10));
     tft.fillScreen(TFT_BLACK);
     tft.drawBitmap(35, 300, Bottom_layer_2Bottom_layer_2, 380, 22, Dark_green);
     tft.drawBitmap(35, 300, myBitmapDate, 380, 22, Light_green);
 
+    static unsigned long lastGifUpdate = 0;
+    static unsigned long lastTimeUpdate = 0;
+    static bool radioStarted = false;
+    const unsigned long GIF_INTERVAL = 200;           // Even slower GIF updates
+    const unsigned long TIME_UPDATE_INTERVAL = 1000;  // Time updates every second
+
+    // Stop DFPlayer if it's running
+    myDFPlayer.pause();
+
     while (digitalRead(IN_RADIO) == false) {
-      if (gif.open((uint8_t *)RADIO, sizeof(RADIO), GIFDraw)) {
-        //Serial.printf("Successfully opened GIF; Canvas size = %d x %d\n", gif.getCanvasWidth(), gif.getCanvasHeight());
-        tft.startWrite();  // The TFT chip select is locked low
-        while (gif.playFrame(true, NULL)) {
+      unsigned long currentMillis = millis();
+
+      // Handle Radio with priority
+      if (!radioStarted) {
+        radioStarted = startRadio();
+        delay(100);
+      }
+
+      if (radioStarted && mp3) {
+        // Multiple mp3->loop() calls for smoother playback
+        for (int i = 0; i < 4; i++) {
+          if (mp3->isRunning()) {
+            if (!mp3->loop()) {
+              break;
+            }
+          }
           yield();
         }
-        gif.close();
-        tft.endWrite();  // Release TFT chip select for other SPI devices
+
+        if (!mp3->isRunning()) {
+          Serial.println("MP3 stopped, restarting...");
+          cleanupI2S();
+          radioStarted = startRadio();
+        }
       }
+
+      // Update time less frequently
+      if (currentMillis - lastTimeUpdate >= TIME_UPDATE_INTERVAL) {
+        lastTimeUpdate = currentMillis;
+        timeClient.update();
+      }
+
+      // Update GIF even less frequently and only if audio is stable
+      if (currentMillis - lastGifUpdate >= GIF_INTERVAL && mp3 && mp3->isRunning()) {
+        lastGifUpdate = currentMillis;
+        static int frameCount = 0;
+
+        if (frameCount++ % 4 == 0) {  // Process every fourth frame
+          if (gif.open((uint8_t *)RADIO, sizeof(RADIO), GIFDraw)) {
+            tft.startWrite();
+            gif.playFrame(true, NULL);
+            gif.close();
+            tft.endWrite();
+          }
+        }
+      }
+
+      yield();
+    }
+
+    // Cleanup when exiting radio mode
+    if (radioStarted) {
+      cleanupI2S();
+      radioStarted = false;
     }
   }
 }
