@@ -22,7 +22,21 @@ const char *ssid = "ASUS-RT-AX56U-2.4G";
 const char *password = "tocino25";
 int UTC = -8;                       //Set your time zone ex: france = UTC+2
 uint16_t notification_volume = 25;  //0 to 30
+#define DEBUG 1                     // Set to 0 to exclude
 //=====================================================================
+
+#include <TFT_eSPI.h>
+#include "WiFiManager.h"
+#include "NTPClient.h"
+#include "DFRobotDFPlayerMini.h"
+#include <Adafruit_AHTX0.h>
+#include "FS.h"
+#include <SPI.h>
+
+#define REPEAT_CAL false
+#define Light_green 0x35C2
+#define Dark_green 0x0261
+#define Time_color 0x04C0
 
 // Load GIF library
 #include <AnimatedGIF.h>
@@ -56,47 +70,36 @@ AnimatedGIF gif;
 #define IN_TIME 32
 #define IN_RADIO 33
 
-// PCM5102A DAC pins
+// PCM5102A DAC pins for internet radio
 #define I2S_BCLK 12  // BCK pin
 #define I2S_LRC 13   // LRCK pin
 #define I2S_DOUT 14  // DIN pin
 
-// Rotary encoder pins
+// Radio Station Rotary encoder pins
 #define ROTARY_L1 34
 #define ROTARY_L2 35
 #define ROTARY_L3 36
 #define ROTARY_R1 39
 #define ROTARY_R2 19
 
-#define REPEAT_CAL false
-#define Light_green 0x35C2
-#define Dark_green 0x0261
-#define Time_color 0x04C0
-
-#include <TFT_eSPI.h>
-#include "WiFiManager.h"
-#include "NTPClient.h"
-#include "DFRobotDFPlayerMini.h"
-#include <Adafruit_AHTX0.h>
-#include "FS.h"
-#include <SPI.h>
-
-// internet radio
+// Internet radio
 #include <AudioFileSourceICYStream.h>
 #include <AudioFileSourceBuffer.h>
 #include <AudioGeneratorMP3.h>
 #include <AudioOutputI2S.h>
 
+// Forward declarations
 void cleanupI2S();
 void MDCallback(void *cbData, const char *type, bool isUnicode, const char *string);
 bool setupAudio();
 bool startRadio();
 
+// Variables
 const byte RXD2 = 16;  // Connects to module's TX => 16
 const byte TXD2 = 17;  // Connects to module's RX => 17
 
 DFRobotDFPlayerMini myDFPlayer;
-void printDetail(uint8_t type, int value);
+// void printDetail(uint8_t type, int value);
 #define FPSerial Serial1
 TFT_eSPI tft = TFT_eSPI();
 Adafruit_AHTX0 aht;
@@ -116,7 +119,6 @@ bool enableHeater = false;
 uint8_t loopCnt = 0;
 const long utcOffsetInSeconds = 3600;  // Offset in second
 uint32_t targetTime = 0;               // for next 1 second timeout
-static uint8_t conv2d(const char *p);  // Forward declaration needed for IDE 1.6.x
 
 // Define NTP Client to get time
 WiFiUDP ntpUDP;
@@ -126,22 +128,23 @@ byte omm = 99, oss = 99;
 byte xcolon = 0, xsecs = 0;
 unsigned int colour = 0;
 
-// internet radio
 // Audio objects
 AudioFileSourceICYStream *stream = nullptr;
 AudioFileSourceBuffer *buff = nullptr;
 AudioGeneratorMP3 *mp3 = nullptr;
 AudioOutputI2S *out = nullptr;
 uint8_t *preallocateBuffer = nullptr;
-const int preallocateBufferSize = 16 * 1024;  // Back to 16KB to reduce memory pressure
+const int preallocateBufferSize = 16 * 1024;  // 16KB to reduce memory pressure
 
-// Radio stations - just testing with one for now
+// Radio stations
 const char *radioStations[] = {
   "http://strm112.1.fm/60s_70s_mobile_mp3"  // Testing with just one station
 };
 
 void MDCallback(void *cbData, const char *type, bool isUnicode, const char *string) {
+#if DEBUG
   Serial.printf("Metadata: %s = %s\n", type, string);
+#endif
 }
 
 void cleanupI2S() {
@@ -166,7 +169,9 @@ bool setupAudio() {
   if (!preallocateBuffer) {
     preallocateBuffer = (uint8_t *)malloc(preallocateBufferSize);
     if (!preallocateBuffer) {
+#if DEBUG
       Serial.println("Failed to allocate buffer");
+#endif
       return false;
     }
   }
@@ -182,7 +187,9 @@ bool setupAudio() {
 }
 
 bool startRadio() {
+#if DEBUG
   Serial.println("Starting radio...");
+#endif
 
   cleanupI2S();
 
@@ -190,38 +197,44 @@ bool startRadio() {
 
   stream = new AudioFileSourceICYStream(radioStations[0]);
   if (!stream) {
+#if DEBUG
     Serial.println("Failed to create stream");
+#endif
     return false;
   }
   stream->RegisterMetadataCB(MDCallback, NULL);
 
   buff = new AudioFileSourceBuffer(stream, preallocateBuffer, preallocateBufferSize);
   if (!buff) {
+#if DEBUG
     Serial.println("Failed to create buffer");
+#endif
     cleanupI2S();
     return false;
   }
 
   mp3 = new AudioGeneratorMP3();
   if (!mp3) {
+#if DEBUG
     Serial.println("Failed to create MP3 decoder");
+#endif
     cleanupI2S();
     return false;
   }
 
   if (!mp3->begin(buff, out)) {
+#if DEBUG
     Serial.println("Failed to start MP3 decoder");
+#endif
     cleanupI2S();
     return false;
   }
 
+#if DEBUG
   Serial.println("Radio started successfully");
-  return true;
-}
+#endif
 
-void maintainBuffer() {
-  // The buffer is managed automatically by the AudioFileSourceBuffer class
-  // We just need to ensure mp3->loop() is called frequently
+  return true;
 }
 
 void setup() {
@@ -246,7 +259,9 @@ void setup() {
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
+#if DEBUG
     Serial.print(".");
+#endif
     tft.drawString(".", 10 + a, 40, 4);
     a = a + 5;
     if (a > 100) {
@@ -255,9 +270,12 @@ void setup() {
       tft.drawString("Check wifi SSID and PASSWORD", 10, 60, 4);
     }
   }
+
+#if DEBUG
   Serial.println("\nConnected to the WiFi network");
   Serial.print("Local ESP32 IP: ");
   Serial.println(WiFi.localIP());
+#endif
 
   tft.begin();
   tft.setRotation(1);
@@ -271,18 +289,31 @@ void setup() {
 
   FPSerial.begin(9600, SERIAL_8N1, RXD2, TXD2);
   delay(1000);
+
+#if DEBUG
   Serial.println();
   Serial.println(F("DFRobot DFPlayer Mini Demo"));
   Serial.println(F("Initializing DFPlayer ... (May take 3~5 seconds)"));
+#endif
+
   tft.drawString("Initializing DFPlayer...", 10, 20, 4);
   tft.fillScreen(TFT_BLACK);
 
   if (!myDFPlayer.begin(FPSerial, /*isACK = */ true, /*doReset = */ true)) {  //Use serial to communicate with mp3.
+#if DEBUG
     Serial.println(F("Unable to begin DFplayer"));
+#endif
     tft.drawString("Unable to begin DFplayer", 10, 20, 4);
+
+#if DEBUG
     Serial.println(F("1.Recheck the connection!"));
+#endif
     tft.drawString("1. Recheck the connection", 10, 50, 4);
+
+#if DEBUG
     Serial.println(F("2.Insert the SD card!"));
+#endif
+
     tft.drawString("2. Insert the SD card", 10, 80, 4);
     tft.drawString("3. Format SD card in FAT32", 10, 110, 4);
 
@@ -291,20 +322,28 @@ void setup() {
     }
   }
 
+#if DEBUG
   Serial.println(F("DFPlayer Mini online."));
+#endif
   tft.drawString("DFPlayer Mini online", 10, 20, 4);
+
   myDFPlayer.volume(notification_volume);
   myDFPlayer.setTimeOut(500);
 
   // Initialize AHT sensor
   if (!aht.begin()) {
+#if DEBUG
     Serial.println("Couldn't find AHT sensor!");
+#endif
     tft.fillScreen(TFT_BLACK);
     tft.drawString("Couldn't find AHT sensor", 10, 20, 4);
     tft.drawString("Recheck the connection", 10, 50, 4);
     while (1) delay(1000);
   }
+
+#if DEBUG
   Serial.println("AHT sensor initialized");
+#endif
 
   gif.begin(BIG_ENDIAN_PIXELS);
 
@@ -313,7 +352,9 @@ void setup() {
 
   // Initialize audio system
   if (!setupAudio()) {
+#if DEBUG
     Serial.println("Failed to setup audio");
+#endif
     return;
   }
 
@@ -330,32 +371,39 @@ void setup() {
 
 void loop() {
   static unsigned long lastTimeUpdate = 0;
-  const unsigned long TIME_UPDATE_INTERVAL = 10000;
+  const unsigned long TIME_UPDATE_INTERVAL = 10000;  // milliseconds to update time
 
   static bool radioStarted = false;
   static unsigned long lastCheck = 0;
 
-  // Update time only every second
+  // Update time only every X seconds
   unsigned long currentMillis = millis();
   if (currentMillis - lastTimeUpdate >= TIME_UPDATE_INTERVAL) {
     lastTimeUpdate = currentMillis;
     timeClient.update();
+#if DEBUG
     Serial.print("Time: ");
     Serial.println(timeClient.getFormattedTime());
+#endif
 
     unsigned long epochTime = timeClient.getEpochTime();
     struct tm *ptm = gmtime((time_t *)&epochTime);
     int currentYear = ptm->tm_year + 1900;
+#if DEBUG
     Serial.print("Year: ");
     Serial.println(currentYear);
-
+#endif
     int monthDay = ptm->tm_mday;
+#if DEBUG
     Serial.print("Month day: ");
     Serial.println(monthDay);
+#endif
 
     int currentMonth = ptm->tm_mon + 1;
+#if DEBUG
     Serial.print("Month: ");
     Serial.println(currentMonth);
+#endif
   }
 
   if (digitalRead(IN_STAT) == false) {
@@ -363,7 +411,9 @@ void loop() {
     myDFPlayer.playMp3Folder(random(2, 5));
     while (digitalRead(IN_STAT) == false) {
       if (gif.open((uint8_t *)STAT, sizeof(STAT), GIFDraw)) {
-        //Serial.printf("Successfully opened GIF; Canvas size = %d x %d\n", gif.getCanvasWidth(), gif.getCanvasHeight());
+#if DEBUG
+        Serial.printf("Successfully opened GIF; Canvas size = %d x %d\n", gif.getCanvasWidth(), gif.getCanvasHeight());
+#endif
         tft.startWrite();  // The TFT chip select is locked low
         while (gif.playFrame(true, NULL)) {
           yield();
@@ -407,7 +457,9 @@ void loop() {
       float h = humidity.relative_humidity;
 
       if (gif.open((uint8_t *)DATA_1, sizeof(DATA_1), GIFDraw)) {
-        // Serial.printf("Successfully opened GIF; Canvas size = %d x %d\n", gif.getCanvasWidth(), gif.getCanvasHeight());
+#if DEBUG
+        Serial.printf("Successfully opened GIF; Canvas size = %d x %d\n", gif.getCanvasWidth(), gif.getCanvasHeight());
+#endif
         tft.startWrite();  // The TFT chip select is locked low
         while (gif.playFrame(true, NULL)) {
           yield();
@@ -430,7 +482,9 @@ void loop() {
     tft.drawBitmap(35, 300, myBitmapDate, 380, 22, Light_green);
     while (digitalRead(IN_TIME) == false) {
       if (gif.open((uint8_t *)TIME, sizeof(TIME), GIFDraw)) {
-        // Serial.printf("Successfully opened GIF; Canvas size = %d x %d\n", gif.getCanvasWidth(), gif.getCanvasHeight());
+#if DEBUG
+        Serial.printf("Successfully opened GIF; Canvas size = %d x %d\n", gif.getCanvasWidth(), gif.getCanvasHeight());
+#endif
         tft.startWrite();  // The TFT chip select is locked low
         while (gif.playFrame(true, NULL)) {
           yield();
@@ -451,8 +505,8 @@ void loop() {
     static unsigned long lastGifUpdate = 0;
     static unsigned long lastTimeUpdate = 0;
     static bool radioStarted = false;
-    const unsigned long GIF_INTERVAL = 200;           // Even slower GIF updates
-    const unsigned long TIME_UPDATE_INTERVAL = 1000;  // Time updates every second
+    const unsigned long GIF_INTERVAL = 20000;          // Even slower GIF updates
+    const unsigned long TIME_UPDATE_INTERVAL = 10000;  // Time updates every second
 
     // Stop DFPlayer if it's running
     myDFPlayer.pause();
@@ -478,7 +532,9 @@ void loop() {
         }
 
         if (!mp3->isRunning()) {
+#if DEBUG
           Serial.println("MP3 stopped, restarting...");
+#endif
           cleanupI2S();
           radioStarted = startRadio();
         }
@@ -557,9 +613,6 @@ void show_hour() {
   } else {
     tft.drawBitmap(150, 220, nightNight, 170, 29, Light_green);
   }
-  //  if(timeClient.getHours() <12 && timeClient.getHours() >0) {tft.drawBitmap(150, 220, MorningMorning , 170, 29, Light_green);}
-  //  else {tft.drawBitmap(150, 220, afternoonAfternoon  , 170, 29, Light_green);}
-
 
   // Update digital time
   int xpos = 85;
@@ -595,83 +648,4 @@ void show_hour() {
   // }
   tft.setTextSize(1);
   prev_hour = timeClient.getHours();
-}
-
-// Function to extract numbers from compile time string
-static uint8_t conv2d(const char *p) {
-  uint8_t v = 0;
-  if ('0' <= *p && *p <= '9')
-    v = *p - '0';
-  return 10 * v + *++p - '0';
-}
-
-void printDetail(uint8_t type, int value) {
-  switch (type) {
-    case TimeOut:
-      Serial.println(F("Time Out!"));
-      break;
-    case WrongStack:
-      Serial.println(F("Stack Wrong!"));
-      break;
-    case DFPlayerCardInserted:
-      Serial.println(F("Card Inserted!"));
-      break;
-    case DFPlayerCardRemoved:
-      Serial.println(F("Card Removed!"));
-      break;
-    case DFPlayerCardOnline:
-      Serial.println(F("Card Online!"));
-      break;
-    case DFPlayerUSBInserted:
-      Serial.println("USB Inserted!");
-      break;
-    case DFPlayerUSBRemoved:
-      Serial.println("USB Removed!");
-      break;
-    case DFPlayerPlayFinished:
-      Serial.print(F("Number:"));
-      Serial.print(value);
-      Serial.println(F(" Play Finished!"));
-      break;
-    case DFPlayerError:
-      Serial.print(F("DFPlayerError:"));
-      switch (value) {
-        case Busy:
-          Serial.println(F("Card not found"));
-          break;
-        case Sleeping:
-          Serial.println(F("Sleeping"));
-          break;
-        case SerialWrongStack:
-          Serial.println(F("Get Wrong Stack"));
-          break;
-        case CheckSumNotMatch:
-          Serial.println(F("Check Sum Not Match"));
-          break;
-        case FileIndexOut:
-          Serial.println(F("File Index Out of Bound"));
-          break;
-        case FileMismatch:
-          Serial.println(F("Cannot Find File"));
-          break;
-        case Advertise:
-          Serial.println(F("In Advertise"));
-          break;
-        default:
-          break;
-      }
-      break;
-    default:
-      break;
-  }
-}
-
-void waitMilliseconds(uint16_t msWait) {
-  uint32_t start = millis();
-
-  while ((millis() - start) < msWait) {
-    // calling mp3.loop() periodically allows for notifications
-    // to be handled without interrupts
-    delay(1);
-  }
 }
