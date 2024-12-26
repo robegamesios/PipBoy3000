@@ -503,10 +503,8 @@ void loop() {
     tft.drawBitmap(35, 300, myBitmapDate, 380, 22, Light_green);
 
     static unsigned long lastGifUpdate = 0;
-    static unsigned long lastTimeUpdate = 0;
     static bool radioStarted = false;
-    const unsigned long GIF_INTERVAL = 20000;          // Even slower GIF updates
-    const unsigned long TIME_UPDATE_INTERVAL = 10000;  // Time updates every second
+    const unsigned long GIF_INTERVAL = 20000;  // Even slower GIF updates
 
     // Stop DFPlayer if it's running
     myDFPlayer.pause();
@@ -540,24 +538,15 @@ void loop() {
         }
       }
 
-      // Update time less frequently
-      if (currentMillis - lastTimeUpdate >= TIME_UPDATE_INTERVAL) {
-        lastTimeUpdate = currentMillis;
-        timeClient.update();
-      }
-
       // Update GIF even less frequently and only if audio is stable
       if (currentMillis - lastGifUpdate >= GIF_INTERVAL && mp3 && mp3->isRunning()) {
         lastGifUpdate = currentMillis;
-        static int frameCount = 0;
 
-        if (frameCount++ % 4 == 0) {  // Process every fourth frame
-          if (gif.open((uint8_t *)RADIO, sizeof(RADIO), GIFDraw)) {
-            tft.startWrite();
-            gif.playFrame(true, NULL);
-            gif.close();
-            tft.endWrite();
-          }
+        if (gif.open((uint8_t *)RADIO, sizeof(RADIO), GIFDraw)) {
+          tft.startWrite();
+          gif.playFrame(true, NULL);
+          gif.close();
+          tft.endWrite();
         }
       }
 
