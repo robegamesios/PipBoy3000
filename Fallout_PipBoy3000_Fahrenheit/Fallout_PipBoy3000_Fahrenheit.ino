@@ -93,10 +93,12 @@ void cleanupI2S();
 void MDCallback(void *cbData, const char *type, bool isUnicode, const char *string);
 bool setupAudio();
 bool startRadio();
+void displaySongInfo();
+void show_hour();
 
-// Variables
-const byte RXD2 = 16;  // Connects to module's TX => 16
-const byte TXD2 = 17;  // Connects to module's RX => 17
+  // Variables
+  const byte RXD2 = 16;  // Connects to module's TX => 16
+const byte TXD2 = 17;    // Connects to module's RX => 17
 
 DFRobotDFPlayerMini myDFPlayer;
 // void printDetail(uint8_t type, int value);
@@ -136,6 +138,10 @@ AudioOutputI2S *out = nullptr;
 uint8_t *preallocateBuffer = nullptr;
 const int preallocateBufferSize = 16 * 1024;  // 16KB to reduce memory pressure
 
+char currentTitle[64] = "";
+char currentArtist[64] = "";
+bool newSongInfo = false;
+
 // Radio stations
 const char *radioStations[] = {
   "http://strm112.1.fm/60s_70s_mobile_mp3"  // Testing with just one station
@@ -145,6 +151,17 @@ void MDCallback(void *cbData, const char *type, bool isUnicode, const char *stri
 #if DEBUG
   Serial.printf("Metadata: %s = %s\n", type, string);
 #endif
+
+  // Check if this is a title or artist update
+  if (strcmp(type, "StreamTitle") == 0 || strcmp(type, "Title") == 0) {
+    strncpy(currentTitle, string, sizeof(currentTitle) - 1);
+    currentTitle[sizeof(currentTitle) - 1] = '\0';
+    newSongInfo = true;
+  } else if (strcmp(type, "Artist") == 0) {
+    strncpy(currentArtist, string, sizeof(currentArtist) - 1);
+    currentArtist[sizeof(currentArtist) - 1] = '\0';
+    newSongInfo = true;
+  }
 }
 
 void cleanupI2S() {
@@ -502,9 +519,16 @@ void loop() {
     tft.drawBitmap(35, 300, Bottom_layer_2Bottom_layer_2, 380, 22, Dark_green);
     tft.drawBitmap(35, 300, myBitmapDate, 380, 22, Light_green);
 
-    static unsigned long lastGifUpdate = 0;
-    static bool radioStarted = false;
-    const unsigned long GIF_INTERVAL = 20000;  // Even slower GIF updates
+    if (gif.open((uint8_t *)RADIO, sizeof(RADIO), GIFDraw)) {
+      tft.startWrite();
+      gif.playFrame(true, NULL);
+      gif.close();
+      tft.endWrite();
+    }
+
+    // static unsigned long lastGifUpdate = 0;
+    // static bool radioStarted = false;
+    // const unsigned long GIF_INTERVAL = 60000;  // Even slower GIF updates
 
     // Stop DFPlayer if it's running
     myDFPlayer.pause();
@@ -529,6 +553,11 @@ void loop() {
           yield();
         }
 
+        if (newSongInfo) {
+          displaySongInfo();
+          newSongInfo = false;
+        }
+
         if (!mp3->isRunning()) {
 #if DEBUG
           Serial.println("MP3 stopped, restarting...");
@@ -539,18 +568,18 @@ void loop() {
       }
 
       // Update GIF even less frequently and only if audio is stable
-      if (currentMillis - lastGifUpdate >= GIF_INTERVAL && mp3 && mp3->isRunning()) {
-        lastGifUpdate = currentMillis;
+      // if (currentMillis - lastGifUpdate >= GIF_INTERVAL && mp3 && mp3->isRunning()) {
+      //   lastGifUpdate = currentMillis;
 
-        if (gif.open((uint8_t *)RADIO, sizeof(RADIO), GIFDraw)) {
-          tft.startWrite();
-          gif.playFrame(true, NULL);
-          gif.close();
-          tft.endWrite();
-        }
-      }
+      //   if (gif.open((uint8_t *)RADIO, sizeof(RADIO), GIFDraw)) {
+      //     tft.startWrite();
+      //     gif.playFrame(true, NULL);
+      //     gif.close();
+      //     tft.endWrite();
+      //   }
+      // }
 
-      yield();
+      // yield();
     }
 
     // Cleanup when exiting radio mode
@@ -558,6 +587,25 @@ void loop() {
       cleanupI2S();
       radioStarted = false;
     }
+  }
+}
+
+// Function to display the current song info
+void displaySongInfo() {
+  tft.setTextColor(Light_green, TFT_BLACK);
+  tft.setTextSize(1);
+
+  // Clear the song info area
+  tft.fillRect(35, 250, 380, 40, TFT_BLACK);
+
+  // Display title
+  if (strlen(currentTitle) > 0) {
+    tft.drawString(currentTitle, 35, 250, 2);
+  }
+
+  // Display artist
+  if (strlen(currentArtist) > 0) {
+    tft.drawString(currentArtist, 35, 270, 2);
   }
 }
 
