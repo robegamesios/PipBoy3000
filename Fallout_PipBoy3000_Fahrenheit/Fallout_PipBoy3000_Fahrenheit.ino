@@ -22,7 +22,7 @@ const char *ssid = "ASUS-RT-AX56U-2.4G";
 const char *password = "tocino25";
 int UTC = -8;                       //Set your time zone ex: france = UTC+2
 uint16_t notification_volume = 25;  //0 to 30
-#define DEBUG 1                     // Set to 0 to exclude
+#define DEBUG 0                     // Set to 0 to exclude
 //=====================================================================
 
 #include <TFT_eSPI.h>
@@ -52,10 +52,6 @@ AnimatedGIF gif;
 #include "images/INV.h"
 #include "images/temperatureTemp_hum.h"
 #include "images/RADIATION.h"
-#include "images/Morning.h"
-#include "images/Afternoon.h"
-#include "images/Evening.h"
-#include "images/Night.h"
 #include "images/temperatureTemp_hum_F.h"
 
 #define INIT INIT
@@ -68,19 +64,15 @@ AnimatedGIF gif;
 #define IN_INV 26
 #define IN_DATA 27
 #define IN_TIME 32
-#define IN_RADIO 33
+#define IN_MP3PLAYER 33
+#define IN_RADIO 34
+#define IN_RADIO1 35
+#define IN_RADIO2 36
 
 // PCM5102A DAC pins for internet radio
 #define I2S_BCLK 12  // BCK pin
 #define I2S_LRC 13   // LRCK pin
 #define I2S_DOUT 14  // DIN pin
-
-// Radio Station Rotary encoder pins
-#define ROTARY_L1 34
-#define ROTARY_L2 35
-#define ROTARY_L3 36
-#define ROTARY_R1 39
-#define ROTARY_R2 19
 
 // Internet radio
 #include <AudioFileSourceICYStream.h>
@@ -92,16 +84,16 @@ AnimatedGIF gif;
 void cleanupI2S();
 void MDCallback(void *cbData, const char *type, bool isUnicode, const char *string);
 bool setupAudio();
-bool startRadio();
+bool startRadio(uint8_t stationIndex);
 void displaySongInfo();
+void handleRadioStation(uint8_t stationIndex);
 void show_hour();
 
-  // Variables
-  const byte RXD2 = 16;  // Connects to module's TX => 16
-const byte TXD2 = 17;    // Connects to module's RX => 17
+// Variables
+const byte RXD2 = 16;  // Connects to module's TX => 16
+const byte TXD2 = 17;  // Connects to module's RX => 17
 
 DFRobotDFPlayerMini myDFPlayer;
-// void printDetail(uint8_t type, int value);
 #define FPSerial Serial1
 TFT_eSPI tft = TFT_eSPI();
 Adafruit_AHTX0 aht;
@@ -136,30 +128,121 @@ AudioFileSourceBuffer *buff = nullptr;
 AudioGeneratorMP3 *mp3 = nullptr;
 AudioOutputI2S *out = nullptr;
 uint8_t *preallocateBuffer = nullptr;
-const int preallocateBufferSize = 16 * 1024;  // 16KB to reduce memory pressure
+const int preallocateBufferSize = 64 * 1024;
 
 char currentTitle[64] = "";
 char currentArtist[64] = "";
 bool newSongInfo = false;
 
-// Radio stations
-const char *radioStations[] = {
-  "http://strm112.1.fm/60s_70s_mobile_mp3"  // Testing with just one station
+struct RadioStation {
+  const char *name;
+  const char *url;
 };
+
+// Radio stations
+const RadioStation stations[] = {
+  { "60s and 70s Hits", "http://strm112.1.fm/60s_70s_mobile_mp3" },
+  { "70s Greatest Hits", "http://hydra.cdnstream.com/1823_128" },
+  { "Q102 80s", "http://wg.cdn.tibus.net/Q10280s" }
+};
+
+void handleRadioStation(uint8_t stationIndex, uint8_t rotaryPin) {
+  flag = 1;
+  bool radioStarted = false;
+
+  tft.fillScreen(TFT_BLACK);
+  tft.drawBitmap(35, 300, Bottom_layer_2Bottom_layer_2, 380, 22, Dark_green);
+  tft.drawBitmap(35, 300, myBitmapDate, 380, 22, Light_green);
+
+  // Show initial radio GIF
+  if (gif.open((uint8_t *)RADIO, sizeof(RADIO), GIFDraw)) {
+    tft.startWrite();
+    gif.playFrame(true, NULL);
+    gif.close();
+    tft.endWrite();
+  }
+
+  // Stop DFPlayer
+  myDFPlayer.pause();
+
+  // Add debug output for radio startup
+#if DEBUG
+  Serial.println("Starting radio playback...");
+#endif
+
+  while (digitalRead(rotaryPin) == false) {
+    if (!radioStarted) {
+#if DEBUG
+      Serial.printf("Attempting to start station %d\n", stationIndex);
+#endif
+      radioStarted = startRadio(stationIndex);
+      delay(100);
+    }
+
+    if (radioStarted && mp3) {
+      // Multiple mp3->loop() calls for smoother playback
+      for (int i = 0; i < 4; i++) {
+        if (mp3->isRunning()) {
+          if (!mp3->loop()) {
+            break;
+          }
+        }
+        yield();
+      }
+
+      // Update song info if available
+      if (newSongInfo) {
+        displaySongInfo(stationIndex);
+        newSongInfo = false;
+      }
+
+      // Restart if stream stops
+      if (!mp3->isRunning()) {
+#if DEBUG
+        Serial.println("MP3 stopped, restarting...");
+#endif
+        cleanupI2S();
+        radioStarted = startRadio(stationIndex);
+      }
+    }
+    yield();
+  }
+
+  // Cleanup when exiting
+  if (radioStarted) {
+    cleanupI2S();
+    radioStarted = false;
+  }
+}
 
 void MDCallback(void *cbData, const char *type, bool isUnicode, const char *string) {
 #if DEBUG
   Serial.printf("Metadata: %s = %s\n", type, string);
 #endif
 
-  // Check if this is a title or artist update
   if (strcmp(type, "StreamTitle") == 0 || strcmp(type, "Title") == 0) {
-    strncpy(currentTitle, string, sizeof(currentTitle) - 1);
-    currentTitle[sizeof(currentTitle) - 1] = '\0';
-    newSongInfo = true;
-  } else if (strcmp(type, "Artist") == 0) {
-    strncpy(currentArtist, string, sizeof(currentArtist) - 1);
-    currentArtist[sizeof(currentArtist) - 1] = '\0';
+    // Search for the separator " - "
+    const char *separator = strstr(string, " - ");
+
+    if (separator) {
+      // Calculate lengths
+      size_t artistLen = separator - string;
+
+      // Copy artist (everything before " - ")
+      strncpy(currentArtist, string, min(artistLen, sizeof(currentArtist) - 1));
+      currentArtist[min(artistLen, sizeof(currentArtist) - 1)] = '\0';
+
+      // Copy title (everything after " - ")
+      const char *titleStart = separator + 3;  // Skip " - "
+      strncpy(currentTitle, titleStart, sizeof(currentTitle) - 1);
+      currentTitle[sizeof(currentTitle) - 1] = '\0';
+    } else {
+      // If no separator found, put entire string in title
+      strncpy(currentTitle, string, sizeof(currentTitle) - 1);
+      currentTitle[sizeof(currentTitle) - 1] = '\0';
+      currentArtist[0] = '\0';  // Clear artist
+    }
+
     newSongInfo = true;
   }
 }
@@ -203,16 +286,26 @@ bool setupAudio() {
   return true;
 }
 
-bool startRadio() {
+bool startRadio(uint8_t stationIndex) {
 #if DEBUG
   Serial.println("Starting radio...");
+  Serial.printf("Attempting to play station: %s\n", stations[stationIndex].name);
 #endif
+
+  // Bounds check for station index
+  if (stationIndex >= sizeof(stations) / sizeof(stations[0])) {
+#if DEBUG
+    Serial.println("Invalid station index, defaulting to first station");
+#endif
+    stationIndex = 0;
+  }
 
   cleanupI2S();
 
   if (!setupAudio()) return false;
 
-  stream = new AudioFileSourceICYStream(radioStations[0]);
+  // Use the URL from our stations array
+  stream = new AudioFileSourceICYStream(stations[stationIndex].url);
   if (!stream) {
 #if DEBUG
     Serial.println("Failed to create stream");
@@ -248,7 +341,7 @@ bool startRadio() {
   }
 
 #if DEBUG
-  Serial.println("Radio started successfully");
+  Serial.printf("Radio started successfully - playing %s\n", stations[stationIndex].name);
 #endif
 
   return true;
@@ -257,6 +350,9 @@ bool startRadio() {
 void setup() {
 
   pinMode(IN_RADIO, INPUT_PULLUP);
+  pinMode(IN_RADIO1, INPUT_PULLUP);
+  pinMode(IN_RADIO2, INPUT_PULLUP);
+  pinMode(IN_MP3PLAYER, INPUT_PULLUP);
   pinMode(IN_STAT, INPUT_PULLUP);
   pinMode(IN_DATA, INPUT_PULLUP);
   pinMode(IN_INV, INPUT_PULLUP);
@@ -462,7 +558,6 @@ void loop() {
     tft.fillScreen(TFT_BLACK);
     tft.drawBitmap(35, 300, Bottom_layer_2Bottom_layer_2, 380, 22, Dark_green);
     tft.drawBitmap(35, 300, myBitmapDate, 380, 22, Light_green);
-    //tft.drawBitmap(35, 80, temperatureTemp_humTemp_hum_2, 408, 29, Light_green);
     tft.drawBitmap(35, 80, temperatureTemp_hum_F, 408, 29, Light_green);
     tft.drawBitmap(200, 200, RadiationRadiation, 62, 61, Light_green);
 
@@ -513,99 +608,70 @@ void loop() {
     }
   }
 
-  if (digitalRead(IN_RADIO) == false) {
+  if (digitalRead(IN_MP3PLAYER) == false) {
     flag = 1;
+    myDFPlayer.playMp3Folder(random(2, 5));
+    delay(500);
+    myDFPlayer.playMp3Folder(random(5, 10));
     tft.fillScreen(TFT_BLACK);
     tft.drawBitmap(35, 300, Bottom_layer_2Bottom_layer_2, 380, 22, Dark_green);
     tft.drawBitmap(35, 300, myBitmapDate, 380, 22, Light_green);
 
-    if (gif.open((uint8_t *)RADIO, sizeof(RADIO), GIFDraw)) {
-      tft.startWrite();
-      gif.playFrame(true, NULL);
-      gif.close();
-      tft.endWrite();
-    }
-
-    // static unsigned long lastGifUpdate = 0;
-    // static bool radioStarted = false;
-    // const unsigned long GIF_INTERVAL = 60000;  // Even slower GIF updates
-
-    // Stop DFPlayer if it's running
-    myDFPlayer.pause();
-
-    while (digitalRead(IN_RADIO) == false) {
-      unsigned long currentMillis = millis();
-
-      // Handle Radio with priority
-      if (!radioStarted) {
-        radioStarted = startRadio();
-        delay(100);
-      }
-
-      if (radioStarted && mp3) {
-        // Multiple mp3->loop() calls for smoother playback
-        for (int i = 0; i < 4; i++) {
-          if (mp3->isRunning()) {
-            if (!mp3->loop()) {
-              break;
-            }
-          }
+    while (digitalRead(IN_MP3PLAYER) == false) {
+      if (gif.open((uint8_t *)RADIO, sizeof(RADIO), GIFDraw)) {
+        tft.startWrite();  // The TFT chip select is locked low
+        while (gif.playFrame(true, NULL)) {
           yield();
         }
-
-        if (newSongInfo) {
-          displaySongInfo();
-          newSongInfo = false;
-        }
-
-        if (!mp3->isRunning()) {
-#if DEBUG
-          Serial.println("MP3 stopped, restarting...");
-#endif
-          cleanupI2S();
-          radioStarted = startRadio();
-        }
+        gif.close();
+        tft.endWrite();  // Release TFT chip select for other SPI devices
       }
-
-      // Update GIF even less frequently and only if audio is stable
-      // if (currentMillis - lastGifUpdate >= GIF_INTERVAL && mp3 && mp3->isRunning()) {
-      //   lastGifUpdate = currentMillis;
-
-      //   if (gif.open((uint8_t *)RADIO, sizeof(RADIO), GIFDraw)) {
-      //     tft.startWrite();
-      //     gif.playFrame(true, NULL);
-      //     gif.close();
-      //     tft.endWrite();
-      //   }
-      // }
-
-      // yield();
     }
+  }
 
-    // Cleanup when exiting radio mode
-    if (radioStarted) {
-      cleanupI2S();
-      radioStarted = false;
-    }
+  if (digitalRead(IN_RADIO) == false) {
+    handleRadioStation(0, IN_RADIO);
+  }
+
+  if (digitalRead(IN_RADIO1) == false) {
+    handleRadioStation(1, IN_RADIO1);
+  }
+
+  if (digitalRead(IN_RADIO2) == false) {
+    handleRadioStation(2, IN_RADIO2);
   }
 }
 
 // Function to display the current song info
-void displaySongInfo() {
+void displaySongInfo(uint8_t stationIndex) {
+#if DEBUG
+  Serial.print("Drawing station name: ");
+  Serial.println(stations[stationIndex].name);
+#endif
+
   tft.setTextColor(Light_green, TFT_BLACK);
-  tft.setTextSize(1);
+  tft.setTextSize(2);
+
+  // Clear
+  tft.fillRect(10, 70, 270, 100, TFT_BLACK);
+
+  // Display station
+  tft.drawString("STATION:", 35, 70, 1.5);
+  tft.drawString(stations[stationIndex].name, 35, 85, 2);
 
   // Clear the song info area
-  tft.fillRect(35, 250, 380, 40, TFT_BLACK);
-
-  // Display title
-  if (strlen(currentTitle) > 0) {
-    tft.drawString(currentTitle, 35, 250, 2);
-  }
+  tft.fillRect(35, 190, 480, 100, TFT_BLACK);
 
   // Display artist
   if (strlen(currentArtist) > 0) {
-    tft.drawString(currentArtist, 35, 270, 2);
+    tft.drawString("ARTIST:", 35, 190, 1.5);
+    tft.drawString(currentArtist, 35, 205, 2);
+  }
+
+  // Display title
+  if (strlen(currentTitle) > 0) {
+    tft.drawString("SONG:", 35, 245, 1.5);
+    tft.drawString(currentTitle, 35, 260, 2);
   }
 }
 
@@ -630,7 +696,6 @@ void show_hour() {
     hh = timeClient.getHours();
   }
 
-  //tft.fillRect(140, 210, 200, 50, TFT_BLACK);
   if (timeClient.getHours() != prev_hour) { tft.fillRect(140, 210, 200, 50, TFT_BLACK); }
 
   int hour24 = timeClient.getHours();
@@ -641,14 +706,17 @@ void show_hour() {
   // Evening: 5:00 PM to 8:59 PM (17-20)
   // Night: 9:00 PM to 4:59 AM (21-4)
 
+  tft.setTextColor(TFT_BLACK, TFT_GREEN);
+  tft.setTextSize(2);
+
   if (hour24 >= 5 && hour24 < 12) {
-    tft.drawBitmap(150, 220, MorningMorning, 170, 29, Light_green);
+    tft.drawString("   MORNING   ", 150, 220, 2);
   } else if (hour24 >= 12 && hour24 < 17) {
-    tft.drawBitmap(150, 220, afternoonAfternoon, 170, 29, Light_green);
+    tft.drawString("   AFTERNOON   ", 130, 220, 2);
   } else if (hour24 >= 17 && hour24 < 21) {
-    tft.drawBitmap(150, 220, eveningEvening, 170, 29, Light_green);
+    tft.drawString("   EVENING   ", 150, 220, 2);
   } else {
-    tft.drawBitmap(150, 220, nightNight, 170, 29, Light_green);
+    tft.drawString("    NIGHT    ", 150, 220, 2);
   }
 
   // Update digital time
@@ -682,7 +750,6 @@ void show_hour() {
       tft.drawChar(':', xcolon, ypos - 8, 7);  // Hour:minute colon
     }
   }
-  // }
   tft.setTextSize(1);
   prev_hour = timeClient.getHours();
 }
