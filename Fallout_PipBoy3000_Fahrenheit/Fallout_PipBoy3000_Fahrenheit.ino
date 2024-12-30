@@ -53,6 +53,7 @@ AnimatedGIF gif;
 #include "images/temperatureTemp_hum.h"
 #include "images/RADIATION.h"
 #include "images/temperatureTemp_hum_F.h"
+#include "images/vaultboy.h"
 
 #define INIT INIT
 #define TIME TIME
@@ -592,11 +593,21 @@ void loop() {
     tft.fillScreen(TFT_BLACK);
     tft.drawBitmap(35, 300, Bottom_layer_2Bottom_layer_2, 380, 22, Dark_green);
     tft.drawBitmap(35, 300, myBitmapDate, 380, 22, Light_green);
-    while (digitalRead(IN_TIME) == false) {
-      if (gif.open((uint8_t *)TIME, sizeof(TIME), GIFDraw)) {
+
+    if (gif.open((uint8_t *)TIME, sizeof(TIME), GIFDraw)) {
 #if DEBUG
-        Serial.printf("Successfully opened GIF; Canvas size = %d x %d\n", gif.getCanvasWidth(), gif.getCanvasHeight());
+      Serial.printf("Successfully opened GIF; Canvas size = %d x %d\n", gif.getCanvasWidth(), gif.getCanvasHeight());
 #endif
+      tft.startWrite();  // The TFT chip select is locked low
+      while (gif.playFrame(true, NULL)) {
+        yield();
+      }
+      gif.close();
+      tft.endWrite();  // Release TFT chip select for other SPI devices
+    }
+
+    while (digitalRead(IN_TIME) == false) {
+      if (gif.open((uint8_t *)vaultboy, sizeof(vaultboy), GIFDraw)) {
         tft.startWrite();  // The TFT chip select is locked low
         while (gif.playFrame(true, NULL)) {
           yield();
@@ -710,17 +721,17 @@ void show_hour() {
   tft.setTextSize(2);
 
   if (hour24 >= 5 && hour24 < 12) {
-    tft.drawString("   MORNING   ", 150, 220, 2);
+    tft.drawString("   MORNING   ", 190, 220, 2);
   } else if (hour24 >= 12 && hour24 < 17) {
-    tft.drawString("   AFTERNOON   ", 130, 220, 2);
+    tft.drawString("   AFTERNOON   ", 170, 220, 2);
   } else if (hour24 >= 17 && hour24 < 21) {
-    tft.drawString("   EVENING   ", 150, 220, 2);
+    tft.drawString("   EVENING   ", 190, 220, 2);
   } else {
-    tft.drawString("    NIGHT    ", 150, 220, 2);
+    tft.drawString("    NIGHT    ", 190, 220, 2);
   }
 
   // Update digital time
-  int xpos = 85;
+  int xpos = 120;
   int ypos = 90;  // Top left corner ot clock text, about half way down
   int ysecs = ypos + 24;
 
