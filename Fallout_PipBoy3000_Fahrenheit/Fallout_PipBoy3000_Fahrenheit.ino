@@ -18,8 +18,8 @@
 // instance data occupies about 22.5K of RAM.
 
 //========================USEFUL VARIABLES=============================
-const char *ssid = "ASUS-RT-AX56U-2.4G";
-const char *password = "tocino25";
+const char *ssid = "SSID";
+const char *password = "PASSWORD";
 int UTC = -8;                       //Set your time zone ex: france = UTC+2
 uint16_t notification_volume = 25;  //0 to 30
 #define DEBUG 0                     // Set to 0 to exclude
