@@ -621,6 +621,9 @@ void loop() {
 
   if (digitalRead(IN_MP3PLAYER) == false) {
     flag = 1;
+#if DEBUG
+    Serial.println("Start DF Mini Player");
+#endif
     myDFPlayer.playMp3Folder(random(2, 5));
     delay(500);
     myDFPlayer.playMp3Folder(random(5, 10));
@@ -693,30 +696,21 @@ void show_hour() {
 
   if (timeClient.getHours() == 0) {
     hh = 12;
-  }
-
-  else if (timeClient.getHours() == 12) {
+  } else if (timeClient.getHours() == 12) {
     hh = timeClient.getHours();
-  }
-
-  else if (timeClient.getHours() >= 13) {
+  } else if (timeClient.getHours() >= 13) {
     hh = timeClient.getHours() - 12;
-  }
-
-  else {
+  } else {
     hh = timeClient.getHours();
   }
 
-  if (timeClient.getHours() != prev_hour) { tft.fillRect(140, 210, 200, 50, TFT_BLACK); }
+  if (timeClient.getHours() != prev_hour) {
+    tft.fillRect(140, 210, 200, 50, TFT_BLACK);
+  }
 
   int hour24 = timeClient.getHours();
 
-  // Time periods:
-  // Morning: 5:00 AM to 11:59 AM (5-11)
-  // Afternoon: 12:00 PM to 4:59 PM (12-16)
-  // Evening: 5:00 PM to 8:59 PM (17-20)
-  // Night: 9:00 PM to 4:59 AM (21-4)
-
+  // Time periods display
   tft.setTextColor(TFT_BLACK, TFT_GREEN);
   tft.setTextSize(2);
 
@@ -731,36 +725,54 @@ void show_hour() {
   }
 
   // Update digital time
-  int xpos = 120;
-  int ypos = 90;  // Top left corner ot clock text, about half way down
-  int ysecs = ypos + 24;
+  static int baseX = 160;  // Base position that never changes
+  int xpos = baseX;        // Working position that gets updated
+  int ypos = 90;
 
   if (omm != mm || flag == 1) {  // Redraw hours and minutes time every minute
+    // Clear the entire time display area
+    tft.fillRect(baseX - 10, ypos - 10, 200, 60, TFT_BLACK);
+
     omm = mm;
+    xpos = baseX;  // Reset xpos to base position
+
     // Draw hours and minutes
     tft.setTextColor(Time_color, TFT_BLACK);
-    if (hh < 10) xpos += tft.drawChar('0', xpos, ypos, 7);  // Add hours leading zero for 24 hr clock
-    xpos += tft.drawNumber(hh, xpos, ypos, 7);              // Draw hours
-    xcolon = xpos;                                          // Save colon coord for later to flash on/off later
+
+    // Draw hours (with space for single digit)
+    if (hh < 10) xpos += tft.drawChar(' ', xpos, ypos, 7);
+    xpos += tft.drawNumber(hh, xpos, ypos, 7);
+
+    // Save colon position before drawing it
+    xcolon = xpos;
     xpos += tft.drawChar(':', xpos, ypos - 8, 7);
-    if (mm < 10) xpos += tft.drawChar('0', xpos, ypos, 7);  // Add minutes leading zero
-    xpos += tft.drawNumber(mm, xpos, ypos, 7);              // Draw minutes
-    xsecs = xpos;                                           // Sae seconds 'x' position for later display updates
+
+    // Draw minutes (with leading zero)
+    if (mm < 10) {
+      xpos += tft.drawChar('0', xpos, ypos, 7);  // Add the leading zero
+    }
+    xpos += tft.drawNumber(mm, xpos, ypos, 7);
+
+    xsecs = xpos;
     flag = 0;
   }
+
   if (oss != ss) {  // Redraw seconds time every second
     oss = ss;
-    xpos = xsecs;
 
-    if (ss % 2) {                               // Flash the colons on/off
-      tft.setTextColor(0x39C4, TFT_BLACK);      // Set colour to grey to dim colon
-      tft.drawChar(':', xcolon, ypos - 8, 7);   // Hour:minute colon
-      tft.setTextColor(Time_color, TFT_BLACK);  // Set colour back to yellow
+    // Only clear and redraw the actual colon area at the saved position
+    tft.fillRect(xcolon, ypos - 8, 12, 48, TFT_BLACK);
+
+    if (ss % 2) {
+      tft.setTextColor(0x39C4, TFT_BLACK);
+      tft.drawChar(':', xcolon, ypos - 8, 7);
+      tft.setTextColor(Time_color, TFT_BLACK);
     } else {
       tft.setTextColor(Time_color, TFT_BLACK);
-      tft.drawChar(':', xcolon, ypos - 8, 7);  // Hour:minute colon
+      tft.drawChar(':', xcolon, ypos - 8, 7);
     }
   }
+
   tft.setTextSize(1);
   prev_hour = timeClient.getHours();
 }
