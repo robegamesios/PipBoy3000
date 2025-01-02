@@ -4,6 +4,8 @@ A fully functional Pip-Boy 3000 Mark IV replica inspired by the Fallout series. 
 
 ![IMG_6981](https://github.com/user-attachments/assets/6239cd6a-6301-482b-a73d-d807f1951759)
 
+# Youtube video: https://youtu.be/JCcoMOvqJRE?si=CCv4_yJAb84hG0v-
+
 # You can get the files and instructions (Diagrams) from: https://www.thingiverse.com/thing:6654866
 
 ## Features
