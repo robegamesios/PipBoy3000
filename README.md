@@ -141,6 +141,13 @@ Enable debugging by setting:
 ```
 This will output detailed information to the Serial Monitor at 115200 baud.
 
+## Image Conversion tools:
+
+https://tomeko.net/online_tools/file_to_hex.php?lang=en
+
+https://ezgif.com/
+
+
 ## Contributing
 
 Feel free to contribute to this project:
