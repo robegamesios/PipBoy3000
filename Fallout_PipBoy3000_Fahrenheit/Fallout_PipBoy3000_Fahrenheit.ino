@@ -120,7 +120,7 @@ WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds *UTC);
 
 byte omm = 99, oss = 99;
-byte xcolon = 0, xsecs = 0;
+int xcolon = 0, xsecs = 0;
 unsigned int colour = 0;
 
 // Audio objects
@@ -705,7 +705,7 @@ void show_hour() {
   }
 
   if (timeClient.getHours() != prev_hour) {
-    tft.fillRect(140, 210, 200, 50, TFT_BLACK);
+    tft.fillRect(160, 210, 230, 50, TFT_BLACK);
   }
 
   int hour24 = timeClient.getHours();
@@ -725,42 +725,52 @@ void show_hour() {
   }
 
   // Update digital time
-  static int baseX = 160;  // Base position that never changes
-  int xpos = baseX;        // Working position that gets updated
+  static int baseX = 160;
+  int xpos = baseX;
   int ypos = 90;
 
-  if (omm != mm || flag == 1) {  // Redraw hours and minutes time every minute
+  if (omm != mm || flag == 1) {
     // Clear the entire time display area
-    tft.fillRect(baseX - 10, ypos - 10, 200, 60, TFT_BLACK);
+    tft.fillRect(baseX - 10, ypos - 10, 330, 120, TFT_BLACK);
 
     omm = mm;
-    xpos = baseX;  // Reset xpos to base position
+    xpos = baseX;
 
     // Draw hours and minutes
     tft.setTextColor(Time_color, TFT_BLACK);
 
-    // Draw hours (with space for single digit)
-    if (hh < 10) xpos += tft.drawChar(' ', xpos, ypos, 7);
-    xpos += tft.drawNumber(hh, xpos, ypos, 7);
-
-    // Save colon position before drawing it
-    xcolon = xpos;
-    xpos += tft.drawChar(':', xpos, ypos - 8, 7);
-
-    // Draw minutes (with leading zero)
-    if (mm < 10) {
-      xpos += tft.drawChar('0', xpos, ypos, 7);  // Add the leading zero
+    // Draw hours with leading space
+    if (hh < 10) {
+      int charWidth = tft.drawChar(' ', xpos, ypos, 7);
+      xpos += charWidth;  // Update xpos after drawing leading zero
     }
-    xpos += tft.drawNumber(mm, xpos, ypos, 7);
 
+    // Draw hour number and update xpos
+    int hourWidth = tft.drawNumber(hh, xpos, ypos, 7);
+    xpos += hourWidth;  // Update xpos after drawing hour
+
+    // Save position for colon after hour is drawn
+    xcolon = xpos;
+
+    // Draw colon and update xpos
+    int colonWidth = tft.drawChar(':', xpos, ypos - 8, 7);
+    xpos += colonWidth;
+
+    // Draw minutes with leading zero
+    if (mm < 10) {
+      int zeroWidth = tft.drawChar('0', xpos, ypos, 7);
+      xpos += zeroWidth;
+    }
+
+    // Draw minute number
+    xpos += tft.drawNumber(mm, xpos, ypos, 7);
     xsecs = xpos;
+
     flag = 0;
   }
 
   if (oss != ss) {  // Redraw seconds time every second
     oss = ss;
-
-    // Only clear and redraw the actual colon area at the saved position
     tft.fillRect(xcolon, ypos - 8, 12, 48, TFT_BLACK);
 
     if (ss % 2) {
